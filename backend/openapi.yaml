@@ -1,0 +1,689 @@
+openapi: 3.0.3
+info:
+  title: CV ATS Generator — API
+  version: 1.0.0
+  description: |
+    Génère un **CV conforme aux normes ATS** et une **lettre de motivation** à partir d'une offre d'emploi,
+    puis suit les candidatures (statuts, relances, entretiens).
+
+    **Comment tester dans cette page**
+    1. Crée un compte avec `POST /auth/register` (ou connecte-toi avec `POST /auth/login`).
+    2. Copie le `token` de la réponse, clique sur le bouton **Authorize** en haut, colle-le (sans écrire « Bearer »), valide.
+    3. Enregistre ton profil (`PUT /profile`), puis lance `POST /generate`.
+
+    L'IA n'utilise que les informations du profil : elle ne peut rien inventer.
+    Toutes les erreurs ont la forme `{ "error": "message", "code": "CODE" }`.
+servers:
+  - url: /api
+    description: Serveur courant
+tags:
+  - name: Authentification
+  - name: Profil
+  - name: Génération
+  - name: Candidatures
+    description: Suivi et tableau de bord
+  - name: Export
+  - name: Traduction
+security:
+  - bearerAuth: []
+
+paths:
+  /health:
+    get:
+      tags: [Authentification]
+      summary: Vérifier que l'API répond
+      security: []
+      responses:
+        '200':
+          description: L'API répond
+          content:
+            application/json:
+              schema: { type: object, properties: { ok: { type: boolean, example: true } } }
+
+  /auth/register:
+    post:
+      tags: [Authentification]
+      summary: Créer un compte
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Credentials' }
+      responses:
+        '201':
+          description: Compte créé
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { description: 'Inscriptions fermées (REGISTRATION_CLOSED)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { description: 'E-mail déjà utilisé (EMAIL_TAKEN)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '429': { $ref: '#/components/responses/TooMany' }
+
+  /auth/login:
+    post:
+      tags: [Authentification]
+      summary: Se connecter
+      description: Renvoie un token valable 7 jours. Après 10 échecs en 15 minutes, la connexion est bloquée temporairement.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Credentials' }
+      responses:
+        '200':
+          description: Connecté
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { description: 'E-mail ou mot de passe incorrect (BAD_CREDENTIALS)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '429': { $ref: '#/components/responses/TooMany' }
+
+  /profile:
+    get:
+      tags: [Profil]
+      summary: Lire le profil maître
+      responses:
+        '200':
+          description: Profil (null si pas encore rempli)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  profile:
+                    nullable: true
+                    allOf: [{ $ref: '#/components/schemas/Profile' }]
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    put:
+      tags: [Profil]
+      summary: Enregistrer (remplacer) le profil maître
+      description: |
+        Le CV généré ne contient que ce qui est écrit ici. Dates au format `AAAA-MM`, `null` pour « en cours ».
+        Limites : 50 éléments par liste, 3000 caractères par champ.
+        Les clés françaises `atouts` et `centre d'intérêt` sont aussi acceptées.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Profile' }
+      responses:
+        '200':
+          description: Profil enregistré
+          content:
+            application/json:
+              schema: { type: object, properties: { profile: { $ref: '#/components/schemas/Profile' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /generate:
+    post:
+      tags: [Génération]
+      summary: Générer le CV et la lettre pour une offre
+      description: |
+        Fournis soit un lien, soit le texte de l'offre (100 caractères minimum).
+        Dure en général 20 à 60 secondes. Compte dans le quota mensuel (30 par heure maximum).
+        LinkedIn, Indeed et Glassdoor ne peuvent pas être lus : colle alors le texte (`needsManualPaste`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                url: { type: string, maxLength: 2048, example: 'https://entreprise.com/offres/stage-fullstack' }
+                offerText: { type: string, maxLength: 30000, description: "Texte de l'offre" }
+      responses:
+        '201':
+          description: Candidature générée et enregistrée
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GenerateResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { description: 'Solde API Claude insuffisant (NO_CREDIT)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '422':
+          description: Offre illisible depuis le lien (BLOCKED_SITE, BLOCKED_URL, FETCH_FAILED, TOO_SHORT)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Error' }
+                  - { type: object, properties: { needsManualPaste: { type: boolean, example: true } } }
+        '429': { $ref: '#/components/responses/TooMany' }
+        '502': { $ref: '#/components/responses/AiError' }
+        '503': { $ref: '#/components/responses/AiError' }
+
+  /applications:
+    get:
+      tags: [Candidatures]
+      summary: Liste des candidatures (tableau de bord)
+      parameters:
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/Status' }
+        - name: q
+          in: query
+          description: Recherche dans l'entreprise et l'intitulé du poste
+          schema: { type: string, maxLength: 100 }
+        - name: sort
+          in: query
+          schema: { type: string, enum: [recent, followup, interview], default: recent }
+      responses:
+        '200':
+          description: Liste
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  applications:
+                    type: array
+                    items: { $ref: '#/components/schemas/ApplicationSummary' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /applications/stats:
+    get:
+      tags: [Candidatures]
+      summary: Chiffres du tableau de bord
+      responses:
+        '200':
+          description: Statistiques
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Stats' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /applications/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [Candidatures]
+      summary: Fiche complète d'une candidature (préparation d'entretien)
+      responses:
+        '200':
+          description: Détail
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  application: { $ref: '#/components/schemas/ApplicationDetail' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Candidatures]
+      summary: Mettre à jour le suivi ou retoucher le CV et la lettre
+      description: |
+        Au moins un champ. Passer à `postule` remplit `applied_at` s'il est vide ;
+        fixer `interview_at` passe une candidature en attente (brouillon, postulé, relancé) au statut `entretien`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ApplicationUpdate' }
+      responses:
+        '200':
+          description: Mis à jour
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ok' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Candidatures]
+      summary: Supprimer une candidature
+      responses:
+        '200':
+          description: Supprimée
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ok' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /applications/{id}/export:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [Export]
+      summary: Télécharger le CV ou la lettre (PDF ou Word)
+      description: Dans Swagger, utilise le lien « Download file » de la réponse pour enregistrer le fichier.
+      parameters:
+        - { name: type, in: query, schema: { type: string, enum: [cv, letter], default: cv } }
+        - { name: format, in: query, schema: { type: string, enum: [pdf, docx], default: pdf } }
+        - name: template
+          in: query
+          description: "`classic` (sobre) ou `elegant` (titres or/brun, dates à droite)"
+          schema: { type: string, enum: [classic, elegant], default: classic }
+        - name: lang
+          in: query
+          description: Version traduite à télécharger (doit avoir été créée avec /translate)
+          schema: { $ref: '#/components/schemas/Language' }
+      responses:
+        '200':
+          description: Fichier
+          content:
+            application/pdf: { schema: { type: string, format: binary } }
+            application/vnd.openxmlformats-officedocument.wordprocessingml.document: { schema: { type: string, format: binary } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: 'Candidature ou traduction introuvable (NOT_FOUND, TRANSLATION_NOT_FOUND)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /applications/{id}/translate:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      tags: [Traduction]
+      summary: Traduire le CV et/ou la lettre
+      description: |
+        Langues : français, anglais, italien, espagnol (alphabets latins). Compte dans le quota.
+        Les noms, entreprises, écoles, dates, contacts, technologies et compétences restent ceux du CV d'origine.
+        La candidature ne peut pas être traduite dans sa propre langue (`SAME_LANGUAGE`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [language]
+              properties:
+                language: { $ref: '#/components/schemas/Language' }
+                what: { type: string, enum: [cv, letter, both], default: both }
+      responses:
+        '201':
+          description: Traduction enregistrée
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  language: { $ref: '#/components/schemas/Language' }
+                  cv: { type: object, nullable: true, description: 'CV traduit (même structure que le CV d''origine)' }
+                  cover_letter: { type: string, nullable: true }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooMany' }
+        '502': { $ref: '#/components/responses/AiError' }
+
+  /applications/{id}/translations:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [Traduction]
+      summary: Versions traduites disponibles
+      responses:
+        '200':
+          description: Liste
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  translations:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        language: { $ref: '#/components/schemas/Language' }
+                        has_cv: { type: boolean }
+                        has_letter: { type: boolean }
+                        updated_at: { type: string, format: date-time }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /applications/{id}/translations/{lang}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+      - { name: lang, in: path, required: true, schema: { $ref: '#/components/schemas/Language' } }
+    get:
+      tags: [Traduction]
+      summary: Contenu d'une version traduite
+      responses:
+        '200':
+          description: Traduction
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  translation:
+                    type: object
+                    properties:
+                      language: { $ref: '#/components/schemas/Language' }
+                      cv_json: { type: object, nullable: true }
+                      cover_letter: { type: string, nullable: true }
+                      updated_at: { type: string, format: date-time }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Traduction]
+      summary: Supprimer une version traduite
+      responses:
+        '200':
+          description: Supprimée
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ok' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Token reçu par /auth/login ou /auth/register
+
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      description: Identifiant de la candidature
+      schema: { type: integer, minimum: 1, example: 1 }
+
+  responses:
+    BadRequest:
+      description: Requête invalide (BAD_JSON, INVALID_PROFILE, INVALID_ID, INVALID_STATUS, INVALID_DATE, INVALID_LANGUAGE, OFFER_MISSING…)
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Unauthorized:
+      description: Token absent, invalide ou expiré (AUTH_REQUIRED, AUTH_INVALID)
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    NotFound:
+      description: Introuvable ou appartenant à un autre utilisateur (NOT_FOUND)
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    TooMany:
+      description: Trop de requêtes ou quota atteint (RATE_LIMIT, QUOTA_EXCEEDED)
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    AiError:
+      description: Problème côté IA (API_KEY_INVALID, MODEL_NOT_FOUND, BAD_AI_RESPONSE, AI_TRUNCATED, AI_OVERLOADED, AI_TIMEOUT)
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string, example: 'Message lisible par l''utilisateur' }
+        code: { type: string, example: CODE_STABLE }
+        requestId: { type: string, description: 'Présent sur les erreurs 5xx, à chercher dans le terminal du serveur' }
+    Ok:
+      type: object
+      properties: { ok: { type: boolean, example: true } }
+    Language:
+      type: string
+      enum: [fr, en, it, es]
+    Status:
+      type: string
+      enum: [brouillon, postule, relance, entretien, refus, offre]
+
+    Credentials:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email, example: prenom.nom@exemple.com }
+        password: { type: string, minLength: 8, maxLength: 72, description: '8 caractères minimum, 72 octets maximum' }
+    AuthResponse:
+      type: object
+      properties:
+        token: { type: string }
+        user:
+          type: object
+          properties:
+            id: { type: integer }
+            email: { type: string }
+            plan: { type: string }
+
+    Profile:
+      type: object
+      required: [full_name]
+      properties:
+        full_name: { type: string, example: Prénom Nom }
+        headline: { type: string, nullable: true, example: Étudiante en développement web }
+        email: { type: string, nullable: true }
+        phone: { type: string, nullable: true }
+        city: { type: string, nullable: true }
+        country: { type: string, nullable: true }
+        linkedin_url: { type: string, nullable: true }
+        github_url: { type: string, nullable: true }
+        portfolio_url: { type: string, nullable: true }
+        base_summary: { type: string, nullable: true }
+        educations:
+          type: array
+          items:
+            type: object
+            required: [school, degree]
+            properties:
+              school: { type: string }
+              degree: { type: string }
+              start_date: { type: string, nullable: true, example: 2024-02, description: AAAA-MM }
+              end_date: { type: string, nullable: true, description: 'AAAA-MM, null si en cours' }
+              details: { type: string, nullable: true }
+        experiences:
+          type: array
+          items:
+            type: object
+            required: [company, role]
+            properties:
+              company: { type: string }
+              role: { type: string }
+              location: { type: string, nullable: true }
+              start_date: { type: string, nullable: true, example: 2026-09 }
+              end_date: { type: string, nullable: true }
+              bullets: { type: array, items: { type: string } }
+        projects:
+          type: array
+          items:
+            type: object
+            required: [name, description]
+            properties:
+              name: { type: string }
+              description: { type: string }
+              technologies: { type: array, items: { type: string } }
+              bullets: { type: array, items: { type: string } }
+              url: { type: string, nullable: true }
+        skills:
+          type: array
+          items:
+            type: object
+            required: [category, name]
+            properties:
+              category: { type: string, example: Back-end }
+              name: { type: string, example: Node.js }
+        languages:
+          type: array
+          items:
+            type: object
+            required: [name, level]
+            properties:
+              name: { type: string, example: Anglais }
+              level: { type: string, example: Intermédiaire }
+        strengths: { type: array, maxItems: 8, items: { type: string }, description: 'Atouts (recopiés tels quels dans le CV, 4 maximum affichés)' }
+        interests: { type: array, maxItems: 10, items: { type: string }, description: "Centres d'intérêt (5 maximum affichés)" }
+
+    Cv:
+      type: object
+      description: CV structuré (c'est ce qui est exporté en PDF ou Word)
+      properties:
+        header:
+          type: object
+          properties:
+            full_name: { type: string }
+            title: { type: string }
+            email: { type: string, nullable: true }
+            phone: { type: string, nullable: true }
+            location: { type: string, nullable: true }
+            links: { type: array, items: { type: string } }
+        summary: { type: string }
+        skills:
+          type: array
+          items:
+            type: object
+            properties:
+              category: { type: string }
+              items: { type: array, items: { type: string } }
+        experiences:
+          type: array
+          items:
+            type: object
+            properties:
+              role: { type: string }
+              company: { type: string }
+              location: { type: string, nullable: true }
+              start_date: { type: string, nullable: true, example: 09/2026 }
+              end_date: { type: string, nullable: true }
+              bullets: { type: array, items: { type: string } }
+        projects:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              technologies: { type: array, items: { type: string } }
+              bullets: { type: array, items: { type: string } }
+        education:
+          type: array
+          items:
+            type: object
+            properties:
+              degree: { type: string }
+              school: { type: string }
+              start_date: { type: string, nullable: true }
+              end_date: { type: string, nullable: true }
+        languages:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              level: { type: string }
+        strengths: { type: array, items: { type: string } }
+        interests: { type: array, items: { type: string } }
+
+    OfferAnalysis:
+      type: object
+      properties:
+        company: { type: string, nullable: true }
+        job_title: { type: string }
+        language: { type: string, enum: [fr, en] }
+        must_have_keywords: { type: array, items: { type: string } }
+        nice_to_have_keywords: { type: array, items: { type: string } }
+        key_missions: { type: array, items: { type: string } }
+
+    Match:
+      type: object
+      properties:
+        score: { type: integer, minimum: 0, maximum: 100 }
+        keywords_matched: { type: array, items: { type: string } }
+        keywords_missing: { type: array, items: { type: string } }
+        advice: { type: array, items: { type: string } }
+
+    GenerateResponse:
+      type: object
+      properties:
+        applicationId: { type: integer }
+        offer_analysis: { $ref: '#/components/schemas/OfferAnalysis' }
+        cv: { $ref: '#/components/schemas/Cv' }
+        cover_letter:
+          type: object
+          properties:
+            subject: { type: string }
+            body: { type: string }
+        match: { $ref: '#/components/schemas/Match' }
+        warnings:
+          type: array
+          items: { type: string }
+          description: 'Ex. compétence retirée car absente du profil'
+        model: { type: string }
+
+    ApplicationSummary:
+      type: object
+      properties:
+        id: { type: integer }
+        job_title: { type: string, nullable: true }
+        company: { type: string, nullable: true }
+        source_url: { type: string, nullable: true }
+        match_score: { type: integer, nullable: true }
+        status: { $ref: '#/components/schemas/Status' }
+        applied_at: { type: string, format: date, nullable: true }
+        follow_up_at: { type: string, format: date, nullable: true }
+        interview_at: { type: string, format: date-time, nullable: true }
+        contact_name: { type: string, nullable: true }
+        follow_up_due: { type: boolean, description: Relance à faire (date atteinte et candidature en attente) }
+        created_at: { type: string, format: date-time }
+
+    ApplicationDetail:
+      type: object
+      properties:
+        id: { type: integer }
+        job_title: { type: string, nullable: true }
+        company: { type: string, nullable: true }
+        source_url: { type: string, nullable: true }
+        cv_json: { $ref: '#/components/schemas/Cv' }
+        cover_letter: { type: string, description: "Objet, ligne vide, puis corps de la lettre" }
+        match_score: { type: integer, nullable: true }
+        keywords_matched: { type: array, items: { type: string } }
+        keywords_missing: { type: array, items: { type: string } }
+        advice: { type: array, nullable: true, items: { type: string } }
+        offer_analysis: { $ref: '#/components/schemas/OfferAnalysis' }
+        offer_text: { type: string }
+        status: { $ref: '#/components/schemas/Status' }
+        applied_at: { type: string, format: date, nullable: true }
+        follow_up_at: { type: string, format: date, nullable: true }
+        interview_at: { type: string, format: date-time, nullable: true }
+        contact_name: { type: string, nullable: true }
+        contact_info: { type: string, nullable: true }
+        notes: { type: string, nullable: true }
+        model_used: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ApplicationUpdate:
+      type: object
+      properties:
+        status: { $ref: '#/components/schemas/Status' }
+        applied_at: { type: string, format: date, nullable: true, example: 2026-11-19 }
+        follow_up_at: { type: string, format: date, nullable: true, example: 2026-11-26 }
+        interview_at: { type: string, format: date-time, nullable: true, example: '2026-12-03T10:30:00' }
+        contact_name: { type: string, maxLength: 150, nullable: true }
+        contact_info: { type: string, maxLength: 190, nullable: true }
+        notes: { type: string, maxLength: 5000, nullable: true }
+        cover_letter: { type: string, maxLength: 10000 }
+        cv_json: { $ref: '#/components/schemas/Cv' }
+
+    Stats:
+      type: object
+      properties:
+        total: { type: integer }
+        by_status:
+          type: object
+          additionalProperties: { type: integer }
+          example: { brouillon: 1, postule: 4, relance: 1, entretien: 2, refus: 0, offre: 0 }
+        upcoming_interviews:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: integer }
+              company: { type: string, nullable: true }
+              job_title: { type: string, nullable: true }
+              interview_at: { type: string, format: date-time }
+              contact_name: { type: string, nullable: true }
+              contact_info: { type: string, nullable: true }
+        follow_ups_due:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: integer }
+              company: { type: string, nullable: true }
+              job_title: { type: string, nullable: true }
+              status: { $ref: '#/components/schemas/Status' }
+              follow_up_at: { type: string, format: date }

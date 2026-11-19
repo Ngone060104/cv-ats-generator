@@ -3,9 +3,13 @@
 require('dotenv').config();
 
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
+const YAML = require('yaml');
+const swaggerUi = require('swagger-ui-express');
 const { pool } = require('./db');
 const { AppError, toHttpError } = require('./errors');
 const { globalLimiter } = require('./middleware/rateLimit');
@@ -19,7 +23,11 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } })); // en-têtes de sécurité, masque X-Powered-By
+// En-têtes de sécurité (masque X-Powered-By). La page de documentation Swagger a besoin de scripts
+// intégrés à la page : on assouplit uniquement la politique de contenu (CSP) pour /api/docs.
+const secure = helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } });
+const secureDocs = helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' }, contentSecurityPolicy: false });
+app.use((req, res, next) => (req.path.startsWith('/api/docs') ? secureDocs : secure)(req, res, next));
 app.use(
   cors({
     origin: process.env.CORS_ORIGIN || 'http://localhost:4200', // Angular en dev
@@ -30,6 +38,19 @@ app.use(express.json({ limit: '1mb' }));
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 app.use('/api', globalLimiter);
+
+// Documentation interactive (Swagger UI) : http://localhost:PORT/api/docs
+// Désactivable avec ENABLE_DOCS=false. Montée avant les routes protégées pour rester publique.
+if (process.env.ENABLE_DOCS !== 'false') {
+  const spec = YAML.parse(fs.readFileSync(path.join(__dirname, '..', 'openapi.yaml'), 'utf8'));
+  app.get('/api/docs.json', (_req, res) => res.json(spec));
+  app.use(
+    '/api/docs',
+    swaggerUi.serve,
+    swaggerUi.setup(spec, { customSiteTitle: 'CV ATS Generator — API', swaggerOptions: { persistAuthorization: true } })
+  );
+}
+
 app.use('/api', require('./routes/auth'));
 app.use('/api', require('./routes/profile'));
 app.use('/api', require('./routes/generate'));
