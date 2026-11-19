@@ -1,0 +1,23 @@
+# Dépendances
+node_modules/
+
+# Secrets : clé API Claude, mot de passe de la base, secret JWT. NE JAMAIS COMMITER.
+.env
+.env.*
+!.env.example
+
+# Fichiers personnels (e-mail, mot de passe, profil complet)
+backend/requests.http
+backend/requests-traduction.http
+backend/requests-suivi.http
+backend/profil.json
+profil.json
+
+# Fichiers générés / système
+dist/
+.angular/
+*.log
+.DS_Store
+Thumbs.db
+*.pdf
+*.docx

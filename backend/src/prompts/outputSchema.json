@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GeneratedApplication",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["offer_analysis", "cv", "cover_letter", "match"],
+  "properties": {
+    "offer_analysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["company", "job_title", "language", "must_have_keywords", "nice_to_have_keywords", "key_missions"],
+      "properties": {
+        "company": { "type": ["string", "null"] },
+        "job_title": { "type": "string" },
+        "language": { "type": "string", "enum": ["fr", "en"] },
+        "must_have_keywords": { "type": "array", "items": { "type": "string" } },
+        "nice_to_have_keywords": { "type": "array", "items": { "type": "string" } },
+        "key_missions": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "cv": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["header", "summary", "skills", "experiences", "projects", "education", "languages"],
+      "properties": {
+        "header": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["full_name", "title", "email", "phone", "location", "links"],
+          "properties": {
+            "full_name": { "type": "string" },
+            "title": { "type": "string", "description": "Intitulé aligné sur le poste visé, sans mentir sur le niveau" },
+            "email": { "type": ["string", "null"] },
+            "phone": { "type": ["string", "null"] },
+            "location": { "type": ["string", "null"] },
+            "links": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "summary": { "type": "string", "description": "2 à 3 phrases, 350 caractères maximum" },
+        "skills": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["category", "items"],
+            "properties": {
+              "category": { "type": "string" },
+              "items": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        },
+        "experiences": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["role", "company", "location", "start_date", "end_date", "bullets"],
+            "properties": {
+              "role": { "type": "string" },
+              "company": { "type": "string" },
+              "location": { "type": ["string", "null"] },
+              "start_date": { "type": ["string", "null"], "description": "MM/AAAA" },
+              "end_date": { "type": ["string", "null"], "description": "MM/AAAA ou null si en cours" },
+              "bullets": { "type": "array", "items": { "type": "string" }, "maxItems": 5 }
+            }
+          }
+        },
+        "projects": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "technologies", "bullets"],
+            "properties": {
+              "name": { "type": "string" },
+              "technologies": { "type": "array", "items": { "type": "string" } },
+              "bullets": { "type": "array", "items": { "type": "string" }, "maxItems": 3 }
+            }
+          }
+        },
+        "education": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["degree", "school", "start_date", "end_date"],
+            "properties": {
+              "degree": { "type": "string" },
+              "school": { "type": "string" },
+              "start_date": { "type": ["string", "null"] },
+              "end_date": { "type": ["string", "null"] }
+            }
+          }
+        },
+        "languages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "level"],
+            "properties": {
+              "name": { "type": "string" },
+              "level": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "cover_letter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["subject", "body"],
+      "properties": {
+        "subject": { "type": "string" },
+        "body": { "type": "string", "description": "Lettre complète, paragraphes séparés par une ligne vide, 250 à 350 mots" }
+      }
+    },
+    "match": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["score", "keywords_matched", "keywords_missing", "advice"],
+      "properties": {
+        "score": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "keywords_matched": { "type": "array", "items": { "type": "string" } },
+        "keywords_missing": { "type": "array", "items": { "type": "string" }, "description": "Exigences de l'offre absentes du profil. Jamais ajoutées au CV." },
+        "advice": { "type": "array", "items": { "type": "string" }, "description": "Conseils concrets pour combler les manques" }
+      }
+    }
+  }
+}
