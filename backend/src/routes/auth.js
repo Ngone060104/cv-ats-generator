@@ -5,7 +5,7 @@ const bcrypt = require('bcryptjs');
 const { pool } = require('../db');
 const { AppError } = require('../errors');
 const asyncHandler = require('../asyncHandler');
-const { signToken } = require('../middleware/auth');
+const { signToken, requireAuth } = require('../middleware/auth');
 const { loginLimiter, registerLimiter } = require('../middleware/rateLimit');
 
 const router = express.Router();
@@ -44,10 +44,11 @@ router.post(
     const hash = await bcrypt.hash(password, 12);
     try {
       const { rows } = await pool.query(
-        'INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id, email, plan',
+        'INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id, email, plan, token_version',
         [email, hash]
       );
-      res.status(201).json({ token: signToken(rows[0].id), user: rows[0] });
+      const { token_version: tv, ...user } = rows[0];
+      res.status(201).json({ token: signToken(user.id, tv), user });
     } catch (err) {
       if (err.code === '23505') throw new AppError(409, 'EMAIL_TAKEN', 'Un compte existe déjà avec cet e-mail.');
       throw err;
@@ -61,12 +62,42 @@ router.post(
   asyncHandler(async (req, res) => {
     const { email, password } = credentials(req);
 
-    const { rows } = await pool.query('SELECT id, email, plan, password_hash FROM users WHERE email = $1', [email]);
+    const { rows } = await pool.query('SELECT id, email, plan, password_hash, token_version FROM users WHERE email = $1', [email]);
     const user = rows[0];
     const ok = await bcrypt.compare(password, user ? user.password_hash : DUMMY_HASH);
     if (!user || !ok) throw new AppError(401, 'BAD_CREDENTIALS', 'E-mail ou mot de passe incorrect.');
 
-    res.json({ token: signToken(user.id), user: { id: user.id, email: user.email, plan: user.plan } });
+    res.json({ token: signToken(user.id, user.token_version), user: { id: user.id, email: user.email, plan: user.plan } });
+  })
+);
+
+/**
+ * POST /api/auth/logout : déconnecte l'utilisateur sur TOUS ses appareils.
+ * Tous les tokens émis jusqu'ici deviennent invalides ; il faudra se reconnecter.
+ */
+router.post(
+  '/auth/logout',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    await pool.query('UPDATE users SET token_version = token_version + 1 WHERE id = $1', [req.userId]);
+    res.json({ ok: true });
+  })
+);
+
+/** GET /api/auth/me : utilisateur connecté et quota (sert au frontend pour vérifier que la session est valide). */
+router.get(
+  '/auth/me',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { rows } = await pool.query(
+      'SELECT id, email, plan, monthly_quota, generations_used_this_month, created_at FROM users WHERE id = $1',
+      [req.userId]
+    );
+    const u = rows[0];
+    res.json({
+      user: { id: u.id, email: u.email, plan: u.plan, created_at: u.created_at },
+      quota: { monthly: u.monthly_quota, used: u.generations_used_this_month }
+    });
   })
 );
 

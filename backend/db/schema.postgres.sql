@@ -15,6 +15,7 @@ CREATE TABLE users (
   password_hash               VARCHAR(255) NOT NULL,
   plan                        user_plan NOT NULL DEFAULT 'free',
   monthly_quota               INTEGER NOT NULL DEFAULT 1000,
+  token_version               INTEGER NOT NULL DEFAULT 0,   -- incrémenté à la déconnexion : invalide les anciens tokens
   generations_used_this_month INTEGER NOT NULL DEFAULT 0,
   created_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

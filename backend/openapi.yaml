@@ -82,6 +82,48 @@ paths:
         '401': { description: 'E-mail ou mot de passe incorrect (BAD_CREDENTIALS)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '429': { $ref: '#/components/responses/TooMany' }
 
+  /auth/logout:
+    post:
+      tags: [Authentification]
+      summary: Se déconnecter
+      description: |
+        Invalide **tous** les tokens de l'utilisateur (déconnexion sur tous ses appareils).
+        Le frontend doit aussi supprimer le token qu'il a stocké.
+      responses:
+        '200':
+          description: Déconnecté
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ok' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /auth/me:
+    get:
+      tags: [Authentification]
+      summary: Utilisateur connecté et quota
+      description: Permet au frontend de vérifier que la session est toujours valide.
+      responses:
+        '200':
+          description: Utilisateur
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    type: object
+                    properties:
+                      id: { type: integer }
+                      email: { type: string }
+                      plan: { type: string }
+                      created_at: { type: string, format: date-time }
+                  quota:
+                    type: object
+                    properties:
+                      monthly: { type: integer, example: 1000 }
+                      used: { type: integer, example: 12 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
   /profile:
     get:
       tags: [Profil]
